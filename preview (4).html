@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wind 서버</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+body{font-family:'Noto Sans KR',sans-serif;margin:0;background:#f7f9fc;color:#111}
+.sidebar{width:220px;position:fixed;height:100%;background:#fff;border-right:1px solid #e5e7eb;padding:20px}
+.main{margin-left:240px;padding:40px}
+.nav{cursor:pointer;margin:10px 0;padding:8px;border-radius:8px}
+.nav:hover{background:#eef2ff}
+.page{display:none}
+.page.active{display:block}
+.card{border:1px solid #e5e7eb;border-radius:12px;padding:20px;margin-bottom:20px;background:#fff}
+.server-box{border:2px solid #4caf50;padding:15px;margin-bottom:20px;font-weight:bold;border-radius:12px;background:#ecfdf5}
+.status-box{border:2px solid #3b82f6;padding:15px;margin-bottom:20px;border-radius:12px;background:#eff6ff;display:flex;justify-content:space-between}
+.btn{padding:10px;background:#5865F2;color:#fff;border:none;border-radius:8px;cursor:pointer}
+input,select,textarea{width:100%;padding:10px;margin-top:10px;border:1px solid #ccc;border-radius:8px}
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <h3>Wind 서버</h3>
+  <div class="nav" onclick="show('home')">🏠 서버 소개</div>
+  <div class="nav" onclick="show('contact')">📩 문의</div>
+  <div class="nav" onclick="showAdmin()">🛠 문의관리</div>
+</div>
+
+<div class="main">
+
+<div class="server-box">서버 주소: windsv.m-c.kr</div>
+<div class="status-box">
+  <div>🟢 서버 상태: 온라인</div>
+  <div>홈페이지: 준비 중</div>
+</div>
+
+<!-- HOME -->
+<div id="home" class="page active">
+  <div class="card">
+    <h3>마인크래프트 서버 소개</h3>
+    <p>wind마인크래프트서버는 약탈서버이고 반야생 서버입니다. 이벤트 진행도 많이 하니 많이 와주세요!</p>
+  </div>
+  <div class="card">
+    <h3>내 문의 확인</h3>
+    <div id="myInquiryList">문의가 없습니다.</div>
+  </div>
+</div>
+
+<!-- CONTACT -->
+<div id="contact" class="page">
+  <h1>문의하기</h1>
+  <div class="card">
+    <label>카테고리</label>
+    <select id="category">
+      <option>마크서버문의</option>
+      <option>버그문의</option>
+      <option>신고문의</option>
+      <option>디코서버 문의</option>
+    </select>
+
+    <label>제목</label>
+    <input type="text" id="title">
+
+    <label>내용</label>
+    <textarea id="content"></textarea>
+
+    <button class="btn" onclick="submitInquiry()">제출</button>
+  </div>
+</div>
+
+<!-- ADMIN LOGIN -->
+<div id="login" class="page">
+  <h1>관리자 로그인</h1>
+  <div class="card">
+    <input type="password" id="adminPass" placeholder="비밀번호 입력">
+    <button class="btn" onclick="login()">로그인</button>
+  </div>
+</div>
+
+<!-- ADMIN VIEW -->
+<div id="admin" class="page">
+  <h1>문의 목록</h1>
+  <div id="inquiryList"></div>
+</div>
+
+<script>
+const ADMIN_PASSWORD = "1234";
+
+function show(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById(page).classList.add('active');
+  if(page==='home') loadMyInquiries();
+}
+
+function showAdmin(){
+  if(localStorage.getItem('admin')==='true'){
+    show('admin');
+    loadInquiries();
+  } else {
+    show('login');
+  }
+}
+
+function login(){
+  const pass = document.getElementById('adminPass').value;
+  if(pass===ADMIN_PASSWORD){
+    localStorage.setItem('admin','true');
+    alert('로그인 성공');
+    show('admin');
+    loadInquiries();
+  } else {
+    alert('비밀번호 틀림');
+  }
+}
+
+function submitInquiry(){
+  const category=document.getElementById('category').value;
+  const title=document.getElementById('title').value.trim();
+  const content=document.getElementById('content').value.trim();
+  if(!title||!content){alert('제목과 내용을 입력해주세요.');return;}
+
+  let list=JSON.parse(localStorage.getItem('inquiries')||'[]');
+  list.push({category,title,content,reply:''});
+  localStorage.setItem('inquiries',JSON.stringify(list));
+  alert('제출 완료');
+  document.getElementById('title').value='';
+  document.getElementById('content').value='';
+  loadMyInquiries();
+}
+
+function loadInquiries(){
+  const container=document.getElementById('inquiryList');
+  let list=JSON.parse(localStorage.getItem('inquiries')||'[]');
+  container.innerHTML='';
+  if(list.length===0) container.innerHTML='문의가 없습니다.';
+  list.forEach((i,index)=>{
+    container.innerHTML+=`
+      <div class="card">
+        <b>[${i.category}] ${i.title}</b>
+        <p>${i.content}</p>
+        <div id="reply-${index}">
+          ${i.reply?`<p style="color:green;"><b>관리자 답변:</b> ${i.reply}</p>`:''}
+        </div>
+        <button class="btn" onclick="replyInquiry(${index})">답변 달기</button>
+      </div>
+    `;
+  });
+}
+
+function replyInquiry(index){
+  const reply=prompt("답변을 입력하세요:");
+  if(reply!==null){
+    let list=JSON.parse(localStorage.getItem('inquiries')||'[]');
+    list[index].reply=reply;
+    localStorage.setItem('inquiries',JSON.stringify(list));
+    loadInquiries();
+    loadMyInquiries();
+  }
+}
+
+function loadMyInquiries(){
+  const container=document.getElementById('myInquiryList');
+  let list=JSON.parse(localStorage.getItem('inquiries')||'[]');
+  if(list.length===0){container.innerHTML='문의가 없습니다.';return;}
+  container.innerHTML='';
+  list.forEach(i=>{
+    container.innerHTML+=`
+      <div class="card">
+        <b>[${i.category}] ${i.title}</b>
+        <p>${i.content}</p>
+        ${i.reply?`<p style="color:green;"><b>관리자 답변:</b> ${i.reply}</p>`:`<p style="color:gray;">관리자 답변 대기 중</p>`}
+      </div>
+    `;
+  });
+}
+
+// 페이지 로드 시 자동 호출
+window.addEventListener('DOMContentLoaded',()=>{loadMyInquiries();});
+</script>
+
+</body>
+</html>
