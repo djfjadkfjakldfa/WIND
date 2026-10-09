@@ -550,6 +550,7 @@ async def set_config(
 
 
 # 1. /인증패널: 웹사이트 인증 링크로 바로 이동하는 URL 버튼 패널 (회색 링크 버튼)
+# 1. /인증패널: 웹사이트 인증 링크로 바로 이동하는 URL 버튼 패널 (회색 링크 버튼)
 @bot.tree.command(name="인증패널", description="웹사이트 인증을 진행할 수 있는 패널을 생성합니다.")
 @is_registered_or_owner()
 async def auth_panel(interaction: discord.Interaction):
@@ -563,7 +564,9 @@ async def auth_panel(interaction: discord.Interaction):
     desc = row[0] if row and row[0] else "아래 버튼을 눌러 인증을 진행하세요."
     btn_text = row[1] if row and row[1] else "인증하기"
 
-    oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=identify guilds.join&state={guild_id}"
+    # 💡 URL 내 공백을 %20으로 처리하여 Bad Request 에러 방지
+    scope_str = "identify%20guilds.join"
+    oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope={scope_str}&state={guild_id}"
 
     embed = discord.Embed(
         title="🛡️ 서버 인증하기",
