@@ -103,7 +103,9 @@ init_db()
 
 # ----------------- FastAPI 웹서버 (OAuth2 Redirect URL 처리) -----------------
 app = FastAPI()
-
+@app.get("/")
+async def root():
+    return {"status": DISCORD인증 완료✅"}
 @app.get("/callback")
 async def oauth_callback(code: str, state: str):
     guild_id = state  # state = 서버 고유 ID
