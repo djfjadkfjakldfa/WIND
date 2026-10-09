@@ -48,11 +48,12 @@ def init_db():
             guild_id TEXT PRIMARY KEY,
             registered_user_id TEXT,
             license_expire TEXT,
-            log_channel_id TEXT,
-            auth_channel_id TEXT,
-            target_role_id TEXT,
+            auth_log_channel_id TEXT,
+            recovery_log_channel_id TEXT,
+            auth_target_role_id TEXT,
             auth_desc TEXT,
-            btn_name TEXT,
+            auth_btn_name TEXT,
+            recovery_desc TEXT,
             attempt_count INTEGER DEFAULT 0,
             success_count INTEGER DEFAULT 0,
             dup_count INTEGER DEFAULT 0,
@@ -123,7 +124,17 @@ async def oauth_callback(code: str, state: str):
     
     resp = requests.post("https://discord.com/api/oauth2/token", data=data, headers=headers)
     if resp.status_code != 200:
-        return HTMLResponse("<h3>❌ 인증 실패: 토큰을 발급받지 못했습니다. 다시 시도해주세요.</h3>", status_code=400)
+        return HTMLResponse("""
+        <html>
+        <head><meta charset="utf-8"><title>인증 실패</title></head>
+        <body style="background-color: #121212; color: #ffffff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+            <div style="background: #1e1e1e; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); text-align: center; max-width: 400px;">
+                <h2 style="color: #ff5252;">❌ 인증 실패</h2>
+                <p style="color: #b0b0b0;">토큰을 발급받지 못했습니다. 다시 시도해주세요.</p>
+            </div>
+        </body>
+        </html>
+        """, status_code=400)
     
     token_json = resp.json()
     access_token = token_json.get("access_token")
@@ -133,7 +144,17 @@ async def oauth_callback(code: str, state: str):
         headers={"Authorization": f"Bearer {access_token}"}
     )
     if user_resp.status_code != 200:
-        return HTMLResponse("<h3>❌ 인증 실패: 유저 정보를 불러오지 못했습니다.</h3>", status_code=400)
+        return HTMLResponse("""
+        <html>
+        <head><meta charset="utf-8"><title>인증 실패</title></head>
+        <body style="background-color: #121212; color: #ffffff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+            <div style="background: #1e1e1e; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); text-align: center; max-width: 400px;">
+                <h2 style="color: #ff5252;">❌ 인증 실패</h2>
+                <p style="color: #b0b0b0;">유저 정보를 불러오지 못했습니다.</p>
+            </div>
+        </body>
+        </html>
+        """, status_code=400)
     
     user_data = user_resp.json()
     user_id = user_data.get("id")
@@ -149,23 +170,29 @@ async def oauth_callback(code: str, state: str):
     conn = sqlite3.connect("bot_system.db")
     cursor = conn.cursor()
 
-    # 시도 횟수 증가
     cursor.execute("UPDATE guild_settings SET attempt_count = attempt_count + 1 WHERE guild_id = ?", (guild_id,))
 
-    # 중복 인증 체크
     cursor.execute("SELECT 1 FROM verified_users WHERE guild_id = ? AND user_id = ?", (guild_id, str(user_id)))
     if cursor.fetchone():
         cursor.execute("UPDATE guild_settings SET dup_count = dup_count + 1 WHERE guild_id = ?", (guild_id,))
         conn.commit()
         conn.close()
-        return HTMLResponse("<h3>⚠️ 이미 해당 서버에서 인증을 완료한 계정입니다. (중복)</h3>")
+        return HTMLResponse("""
+        <html>
+        <head><meta charset="utf-8"><title>인증 중복</title></head>
+        <body style="background-color: #121212; color: #ffffff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+            <div style="background: #1e1e1e; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); text-align: center; max-width: 400px;">
+                <h2 style="color: #ffa726;">⚠️ 이미 인증된 계정</h2>
+                <p style="color: #b0b0b0;">이미 해당 서버에서 인증을 완료한 계정입니다.</p>
+            </div>
+        </body>
+        </html>
+        """)
 
-    # 인증 성공 기록 및 성공 카운트 증가
     cursor.execute("INSERT INTO verified_users (guild_id, user_id) VALUES (?, ?)", (guild_id, str(user_id)))
     cursor.execute("UPDATE guild_settings SET success_count = success_count + 1 WHERE guild_id = ?", (guild_id,))
 
-    # 설정(로그 채널, 부여할 역할) 가져오기
-    cursor.execute("SELECT log_channel_id, target_role_id FROM guild_settings WHERE guild_id = ?", (guild_id,))
+    cursor.execute("SELECT auth_log_channel_id, auth_target_role_id FROM guild_settings WHERE guild_id = ?", (guild_id,))
     settings = cursor.fetchone()
     conn.commit()
     conn.close()
@@ -179,7 +206,6 @@ async def oauth_callback(code: str, state: str):
             except Exception:
                 member = None
 
-        # 역할 부여
         if settings and settings[1] and member:
             role = guild.get_role(int(settings[1]))
             if role:
@@ -193,7 +219,6 @@ async def oauth_callback(code: str, state: str):
         bot_status_str = "봇" if is_bot_flag else "유저"
         invite_code_str = "(웹 인증 완료)"
 
-        # 요청하신 인증 로그 양식 적용
         log_text = (
             f"@{full_username} 가 인증했습니다\n"
             f"- **USER ID:** `{user_id}`\n"
@@ -204,13 +229,22 @@ async def oauth_callback(code: str, state: str):
             f"- **초대링크:** `{invite_code_str}`"
         )
 
-        # 설정된 로그 채널로 전송
         if settings and settings[0]:
             log_chan = guild.get_channel(int(settings[0]))
             if log_chan:
                 await log_chan.send(log_text)
 
-    return HTMLResponse("<h1>✅ 인증이 성공적으로 완료되었습니다! 창을 닫으셔도 됩니다.</h1>")
+    return HTMLResponse("""
+    <html>
+    <head><meta charset="utf-8"><title>인증 완료</title></head>
+    <body style="background-color: #121212; color: #ffffff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+        <div style="background: #1e1e1e; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); text-align: center; max-width: 400px;">
+            <h2 style="color: #66bb6a;">✅ 인증 완료!</h2>
+            <p style="color: #b0b0b0;">인증이 성공적으로 완료되었습니다. 이 창을 닫으셔도 됩니다.</p>
+        </div>
+    </body>
+    </html>
+    """)
 
 
 # ----------------- 디스코드 봇 설정 (discord.py) -----------------
@@ -482,31 +516,47 @@ async def check_users(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="설정", description="인증/복구 패널 설명, 버튼 이름, 로그 채널, 역할을 설정합니다.")
-@app_commands.describe(인증설명="패널 설명", 버튼이름="인증/복구 버튼 이름", 로그채널="인증로그 채널", 부여역할="지급할 역할")
+@bot.tree.command(name="설정", description="인증 및 복구 관련 채널, 설명, 역할, 버튼 이름을 설정합니다.")
+@app_commands.describe(
+    인증로그채널="인증 로그가 전송될 채널",
+    복구로그채널="복구 로그가 전송될 채널",
+    인증설명="인증 패널 설명",
+    복구설명="복구 패널 설명",
+    인증부여역할="인증 성공 시 지급할 역할",
+    인증버튼이름="인증 패널 버튼 이름"
+)
 @is_registered_or_owner()
-async def set_config(interaction: discord.Interaction, 인증설명: str, 버튼이름: str, 로그채널: discord.TextChannel, 부여역할: discord.Role):
+async def set_config(
+    interaction: discord.Interaction, 
+    인증로그채널: discord.TextChannel, 
+    복구로그채널: discord.TextChannel, 
+    인증설명: str, 
+    복구설명: str, 
+    인증부여역할: discord.Role, 
+    인증버튼이름: str
+):
     guild_id = str(interaction.guild_id)
     conn = sqlite3.connect("bot_system.db")
     cursor = conn.cursor()
     cursor.execute("""
-        UPDATE guild_settings SET auth_desc = ?, btn_name = ?, log_channel_id = ?, target_role_id = ?
+        UPDATE guild_settings 
+        SET auth_log_channel_id = ?, recovery_log_channel_id = ?, auth_desc = ?, recovery_desc = ?, auth_target_role_id = ?, auth_btn_name = ?
         WHERE guild_id = ?
-    """, (인증설명, 버튼이름, str(로그채널.id), str(부여역할.id), guild_id))
+    """, (str(인증로그채널.id), str(복구로그채널.id), 인증설명, 복구설명, str(인증부여역할.id), 인증버튼이름, guild_id))
     conn.commit()
     conn.close()
 
     await interaction.response.send_message("✅ 설정이 성공적으로 저장되었습니다.", ephemeral=True)
 
 
-# 1. /인증패널: 웹사이트 인증 링크로 이동하는 '인증하기' 패널 (회색 버튼)
+# 1. /인증패널: 웹사이트 인증 링크로 이동하는 패널 (회색 버튼)
 @bot.tree.command(name="인증패널", description="웹사이트 인증을 진행할 수 있는 패널을 생성합니다.")
 @is_registered_or_owner()
 async def auth_panel(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     conn = sqlite3.connect("bot_system.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT auth_desc, btn_name FROM guild_settings WHERE guild_id = ?", (guild_id,))
+    cursor.execute("SELECT auth_desc, auth_btn_name FROM guild_settings WHERE guild_id = ?", (guild_id,))
     row = cursor.fetchone()
     conn.close()
 
@@ -514,9 +564,9 @@ async def auth_panel(interaction: discord.Interaction):
     btn_text = row[1] if row and row[1] else "인증하기"
 
     embed = discord.Embed(
-        title="# 서버 인증하기",
+        title="🛡️ 서버 인증하기",
         description=desc,
-        color=discord.Color.blue()
+        color=discord.Color.blurple()
     )
 
     class AuthPanelView(discord.ui.View):
@@ -532,38 +582,55 @@ async def auth_panel(interaction: discord.Interaction):
     await interaction.response.send_message("✅ 인증 패널이 생성되었습니다.", ephemeral=True)
 
 
-# 2. /복구패널: 복구키 이용하기 및 라이센스 연장 패널 (회색 버튼)
+# 2. /복구패널: 복구키 이용하기 및 라이센스 연장 패널 (회색 버튼, 조건부 표시)
 @bot.tree.command(name="복구패널", description="복구키를 사용하여 인원을 복구하는 패널을 생성합니다.")
 @is_registered_or_owner()
 async def recovery_panel(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     conn = sqlite3.connect("bot_system.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT auth_desc FROM guild_settings WHERE guild_id = ?", (guild_id,))
+    cursor.execute("SELECT recovery_desc, license_expire FROM guild_settings WHERE guild_id = ?", (guild_id,))
     row = cursor.fetchone()
     conn.close()
 
     desc = row[0] if row and row[0] else "아래 버튼을 눌러 복구키를 입력하고 서버 인원을 복구하세요."
+    license_expire = row[1] if row else ""
 
     embed = discord.Embed(
-        title="# 복구키 사용하기",
+        title="🔄 복구키 사용하기",
         description=desc,
-        color=discord.Color.green()
+        color=discord.Color.dark_grey()
     )
 
     class RecoveryPanelView(discord.ui.View):
-        def __init__(self):
+        def __init__(self, show_extend: bool):
             super().__init__(timeout=None)
 
-        @discord.ui.button(label="복구키 이용하기", style=discord.ButtonStyle.secondary, custom_id="open_recovery_modal")
-        async def open_recovery(self, interaction: discord.Interaction, button: discord.ui.Button):
+            # 복구키 사용하기 버튼 (회색)
+            self.add_item(RecoveryButton())
+
+            # 마스터키 또는 조건 충족 시 라이센스 연장 버튼 추가 (회색)
+            if show_extend:
+                self.add_item(ExtendButton())
+
+    class RecoveryButton(discord.ui.Button):
+        def __init__(self):
+            super().__init__(label="복구키 사용하기", style=discord.ButtonStyle.secondary, custom_id="open_recovery_modal")
+
+        async def callback(self, interaction: discord.Interaction):
             await interaction.response.send_modal(RecoveryModal())
 
-        @discord.ui.button(label="라이센스 연장", style=discord.ButtonStyle.secondary, custom_id="license_extend_button")
-        async def extend_license(self, interaction: discord.Interaction, button: discord.ui.Button):
+    class ExtendButton(discord.ui.Button):
+        def __init__(self):
+            super().__init__(label="라이센스 연장하기", style=discord.ButtonStyle.secondary, custom_id="license_extend_button")
+
+        async def callback(self, interaction: discord.Interaction):
             await interaction.response.send_modal(LicenseExtendModal())
 
-    await interaction.channel.send(embed=embed, view=RecoveryPanelView())
+    # 마스터키(무제한)이거나 Owner인 경우에만 연장 버튼 표시
+    is_master = (license_expire == "무제한") or (interaction.user.id == OWNER_ID)
+
+    await interaction.channel.send(embed=embed, view=RecoveryPanelView(show_extend=is_master))
     await interaction.response.send_message("✅ 복구 패널이 생성되었습니다.", ephemeral=True)
 
 
@@ -604,7 +671,7 @@ class RecoveryModal(discord.ui.Modal, title="서버 복구 인증"):
         cursor.execute("INSERT INTO verified_users (guild_id, user_id) VALUES (?, ?)", (guild_id, str(user.id)))
         cursor.execute("UPDATE guild_settings SET success_count = success_count + 1 WHERE guild_id = ?", (guild_id,))
         
-        cursor.execute("SELECT log_channel_id, target_role_id FROM guild_settings WHERE guild_id = ?", (guild_id,))
+        cursor.execute("SELECT recovery_log_channel_id, auth_target_role_id FROM guild_settings WHERE guild_id = ?", (guild_id,))
         settings = cursor.fetchone()
         conn.commit()
         conn.close()
