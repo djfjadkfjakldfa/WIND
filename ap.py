@@ -22,9 +22,8 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 MASTER_KEY = os.getenv("MASTER_KEY", "KLKLKLKL-00000-11193828-KKKKK-JHDNXBBVIDLSJ")
 PORT = int(os.getenv("PORT", "8000"))
 
-# 데이터베이스 초기화 함수 (DB 분리)
+# 데이터베이스 초기화 (DB 분리)
 def init_db():
-    # 1. 서버 구조 백업용 DB
     conn_server = sqlite3.connect("server_backup.db")
     cursor_server = conn_server.cursor()
     cursor_server.execute(
@@ -41,7 +40,6 @@ def init_db():
     conn_server.commit()
     conn_server.close()
 
-    # 2. 유저 복구, 인증, 라이센스, 설정 관리용 DB
     conn_bot = sqlite3.connect("bot_system.db")
     cursor_bot = conn_bot.cursor()
     cursor_bot.execute(
@@ -94,18 +92,13 @@ def init_db():
 
 init_db()
 
-# ----------------- FastAPI 웹서버 설정 (Redirect URL 처리) -----------------
+# ----------------- FastAPI 웹서버 (OAuth2 Redirect URL 처리) -----------------
 app = FastAPI()
 
 @app.get("/callback")
 async def oauth_callback(code: str, state: str):
-    """
-    디스코드 로그인 후 리다이렉트되는 주소
-    state 파라미터에 서버 ID(guild_id)가 담겨서 들어옴
-    """
     guild_id = state  # state = 서버 고유 ID
 
-    # 1. Access Token 발급 요청
     data = {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
@@ -122,7 +115,6 @@ async def oauth_callback(code: str, state: str):
     token_json = resp.json()
     access_token = token_json.get("access_token")
 
-    # 2. 유저 정보 조회
     user_resp = requests.get(
         "https://discord.com/api/users/@me",
         headers={"Authorization": f"Bearer {access_token}"}
@@ -137,20 +129,15 @@ async def oauth_callback(code: str, state: str):
     full_username = f"{username}#{discriminator}" if discriminator != "0" else username
     is_bot_flag = user_data.get("bot", False)
     
-    # 계정 생성일 계산 (Discord Snowflake ID 이용)
-    # Snowflake to timestamp 변환 공식
     snowflake = int(user_id)
     created_at_timestamp = ((snowflake >> 22) + 1420070400000) / 1000
     created_at_dt = datetime.fromtimestamp(created_at_timestamp)
 
-    # 3. DB 로직 처리 (서버별 분리된 설정 적용)
     conn = sqlite3.connect("bot_system.db")
     cursor = conn.cursor()
 
-    # 시도 횟수 증가
     cursor.execute("UPDATE guild_settings SET attempt_count = attempt_count + 1 WHERE guild_id = ?", (guild_id,))
 
-    # 중복 인증 체크
     cursor.execute("SELECT 1 FROM verified_users WHERE guild_id = ? AND user_id = ?", (guild_id, str(user_id)))
     if cursor.fetchone():
         cursor.execute("UPDATE guild_settings SET dup_count = dup_count + 1 WHERE guild_id = ?", (guild_id,))
@@ -158,20 +145,16 @@ async def oauth_callback(code: str, state: str):
         conn.close()
         return HTMLResponse("<h3>⚠️ 이미 해당 서버에서 인증/복구를 완료한 계정입니다. (중복)</h3>")
 
-    # 인증 성공 기록 및 카운트 증가
     cursor.execute("INSERT INTO verified_users (guild_id, user_id) VALUES (?, ?)", (guild_id, str(user_id)))
     cursor.execute("UPDATE guild_settings SET success_count = success_count + 1 WHERE guild_id = ?", (guild_id,))
 
-    # 해당 서버의 설정(로그 채널, 부여할 역할) 가져오기
     cursor.execute("SELECT log_channel_id, target_role_id FROM guild_settings WHERE guild_id = ?", (guild_id,))
     settings = cursor.fetchone()
     conn.commit()
     conn.close()
 
-    # 4. 디스코드 봇 객체를 통해 해당 서버에 역할 부여 및 로그 전송
     guild = bot.get_guild(int(guild_id))
     if guild:
-        # 멤버 객체 가져오기 (캐시에 없으면 fetch)
         member = guild.get_member(int(user_id))
         if not member:
             try:
@@ -179,7 +162,6 @@ async def oauth_callback(code: str, state: str):
             except Exception:
                 member = None
 
-        # 역할 부여
         if settings and settings[1] and member:
             role = guild.get_role(int(settings[1]))
             if role:
@@ -188,12 +170,10 @@ async def oauth_callback(code: str, state: str):
                 except Exception:
                     pass
 
-        # 부계정 의심 판별 (생성일이 7일 이내인 경우)
         is_suspicious = ":white_check_mark:" if (datetime.now() - created_at_dt).days < 7 else ":x:"
         joined_at_str = member.joined_at.strftime("%Y년 %m월 %d일") if member and member.joined_at else "알 수 없음"
         bot_status_str = "봇" if is_bot_flag else "유저"
 
-        # 요청하신 인증 로그 양식
         log_text = (
             f"@{full_username} 가 인증했습니다\n"
             f"- **USER ID:** `{user_id}`\n"
@@ -204,7 +184,6 @@ async def oauth_callback(code: str, state: str):
             f"- **초대링크:** `(웹 인증 완료)`"
         )
 
-        # 로그 채널에 전송
         if settings and settings[0]:
             log_chan = guild.get_channel(int(settings[0]))
             if log_chan:
@@ -222,7 +201,6 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 데코레이터: /복구봇 등록을 한 유저만 명령어 사용 가능
 def is_registered_or_owner():
     async def predicate(interaction: discord.Interaction):
         if interaction.user.id == OWNER_ID:
@@ -254,7 +232,6 @@ async def on_ready():
         print(e)
     check_licenses.start()
 
-# 백그라운드 태스크: 라이센스 만료 3일 전 DM 알림
 @tasks.loop(hours=24)
 async def check_licenses():
     conn = sqlite3.connect("bot_system.db")
@@ -278,18 +255,29 @@ async def check_licenses():
             except Exception:
                 pass
 
-# ----------------- 디스코드 슬래시 명령어 -----------------
 
-@bot.tree.command(name="복구봇등록", description="마스터키와 라이센스 일수를 입력하여 서버에 복구봇을 등록합니다.")
-@app_commands.describe(마스터키="지정된 마스터키", 라이센스일수="사용할 수 있는 일수 (숫자)")
-async def register_bot(interaction: discord.Interaction, 마스터키: str, 라이센스일수: int):
-    if 마스터키 != MASTER_KEY:
-        await interaction.response.send_message("❌ 올바르지 않은 마스터키입니다.", ephemeral=True)
-        return
+# ----------------- 슬래시 명령어 -----------------
 
+@bot.tree.command(name="복구봇등록", description="키 또는 기본 방식으로 서버에 복구봇을 등록합니다.")
+@app_commands.describe(키="마스터키 또는 일반 등록키 (선택사항)")
+async def register_bot(interaction: discord.Interaction, 키: str = None):
     guild_id = str(interaction.guild_id)
     user_id = str(interaction.user.id)
-    expire_date = (datetime.now() + timedelta(days=라이센스일수)).strftime("%Y-%m-%d")
+
+    # 마스터키를 입력한 경우 (예: 30일 또는 특별 권한 부여)
+    if 키 == MASTER_KEY:
+        days = 30  # 마스터키 등록 시 기본 부여 기간 (예: 30일)
+        msg_type = "마스터키 인증을 통해"
+    elif 키:
+        # 일반 키나 다른 키를 입력한 경우 (예: 7일)
+        days = 7
+        msg_type = "일반 키를 통해"
+    else:
+        # 키 없이 그냥 등록하는 경우 (예: 3일 기본 체험 또는 기본 등록)
+        days = 3
+        msg_type = "기본 방식으로"
+
+    expire_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
 
     conn = sqlite3.connect("bot_system.db")
     cursor = conn.cursor()
@@ -305,7 +293,7 @@ async def register_bot(interaction: discord.Interaction, 마스터키: str, 라�
     conn.close()
 
     await interaction.response.send_message(
-        f"✅ 복구봇이 성공적으로 등록되었습니다!\n- **등록자:** {interaction.user.mention}\n- **라이센스 만료일:** {expire_date} (총 {라이센스일수}일)",
+        f"✅ 복구봇이 {msg_type} 성공적으로 등록되었습니다!\n- **등록자:** {interaction.user.mention}\n- **라이센스 만료일:** {expire_date} (총 {days}일)",
         ephemeral=True,
     )
 
@@ -496,7 +484,6 @@ async def recovery_panel(interaction: discord.Interaction):
 
         @discord.ui.button(label=btn_text, style=discord.ButtonStyle.green, custom_id="web_auth_button")
         async def web_auth(self, interaction: discord.Interaction, button: discord.ui.Button):
-            # OAuth2 로그인 URL 생성 (state에 현재 서버 ID 전달)
             oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=identify guilds.join&state={guild_id}"
             await interaction.response.send_message(f"🔗 아래 링크를 눌러 로그인을 진행해주세요:\n{oauth_url}", ephemeral=True)
 
@@ -508,7 +495,6 @@ async def recovery_panel(interaction: discord.Interaction):
     await interaction.response.send_message("✅ 복구 패널이 생성되었습니다.", ephemeral=True)
 
 
-# 라이센스 연장 모달 (팝업)
 class LicenseExtendModal(discord.ui.Modal, title="라이센스 연장"):
     ext_key_input = discord.ui.TextInput(label="연장키 입력", placeholder="소유자에게 받은 연장키를 입력하세요", required=True)
 
@@ -555,14 +541,10 @@ class LicenseExtendModal(discord.ui.Modal, title="라이센스 연장"):
         await interaction.response.send_message(f"✅ 라이센스가 성공적으로 연장되었습니다!\n- **추가된 일수:** {add_days}일\n- **새로운 만료일:** {new_expire}", ephemeral=True)
 
 
-# ----------------- 앱 실행 스레드 조합 -----------------
 def run_fastapi():
     uvicorn.run(app, host="0.0.0.0", port=PORT)
 
 if __name__ == "__main__":
-    # FastAPI 웹서버를 별도 스레드로 백그라운드 실행
     fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
     fastapi_thread.start()
-
-    # 디스코드 봇 메인 실행
     bot.run(TOKEN)
