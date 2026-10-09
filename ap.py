@@ -549,7 +549,7 @@ async def set_config(
     await interaction.response.send_message("✅ 설정이 성공적으로 저장되었습니다.", ephemeral=True)
 
 
-# 1. /인증패널: 웹사이트 인증 링크로 이동하는 패널 (회색 버튼)
+# 1. /인증패널: 웹사이트 인증 링크로 바로 이동하는 URL 버튼 패널 (회색 링크 버튼)
 @bot.tree.command(name="인증패널", description="웹사이트 인증을 진행할 수 있는 패널을 생성합니다.")
 @is_registered_or_owner()
 async def auth_panel(interaction: discord.Interaction):
@@ -563,6 +563,8 @@ async def auth_panel(interaction: discord.Interaction):
     desc = row[0] if row and row[0] else "아래 버튼을 눌러 인증을 진행하세요."
     btn_text = row[1] if row and row[1] else "인증하기"
 
+    oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=identify guilds.join&state={guild_id}"
+
     embed = discord.Embed(
         title="🛡️ 서버 인증하기",
         description=desc,
@@ -572,11 +574,11 @@ async def auth_panel(interaction: discord.Interaction):
     class AuthPanelView(discord.ui.View):
         def __init__(self):
             super().__init__(timeout=None)
-
-        @discord.ui.button(label=btn_text, style=discord.ButtonStyle.secondary, custom_id="web_auth_button")
-        async def web_auth(self, interaction: discord.Interaction, button: discord.ui.Button):
-            oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=identify guilds.join&state={guild_id}"
-            await interaction.response.send_message(f"🔗 아래 링크를 눌러 로그인을 진행해주세요:\n{oauth_url}", ephemeral=True)
+            self.add_item(discord.ui.Button(
+                label=btn_text, 
+                style=discord.ButtonStyle.link, 
+                url=oauth_url
+            ))
 
     await interaction.channel.send(embed=embed, view=AuthPanelView())
     await interaction.response.send_message("✅ 인증 패널이 생성되었습니다.", ephemeral=True)
@@ -609,7 +611,7 @@ async def recovery_panel(interaction: discord.Interaction):
             # 복구키 사용하기 버튼 (회색)
             self.add_item(RecoveryButton())
 
-            # 마스터키 또는 조건 충족 시 라이센스 연장 버튼 추가 (회색)
+            # 마스터키(무제한) 또는 봇 소유자인 경우에만 연장 버튼 표시 (회색)
             if show_extend:
                 self.add_item(ExtendButton())
 
@@ -627,7 +629,6 @@ async def recovery_panel(interaction: discord.Interaction):
         async def callback(self, interaction: discord.Interaction):
             await interaction.response.send_modal(LicenseExtendModal())
 
-    # 마스터키(무제한)이거나 Owner인 경우에만 연장 버튼 표시
     is_master = (license_expire == "무제한") or (interaction.user.id == OWNER_ID)
 
     await interaction.channel.send(embed=embed, view=RecoveryPanelView(show_extend=is_master))
