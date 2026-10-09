@@ -103,9 +103,11 @@ init_db()
 
 # ----------------- FastAPI 웹서버 (OAuth2 Redirect URL 처리) -----------------
 app = FastAPI()
+
 @app.get("/")
 async def root():
-    return {"status": DISCORD인증 완료✅"}
+    return {"status": "Discord Recovery Bot API is running smoothly."}
+
 @app.get("/callback")
 async def oauth_callback(code: str, state: str):
     guild_id = state  # state = 서버 고유 ID
@@ -497,7 +499,7 @@ async def set_config(interaction: discord.Interaction, 인증설명: str, 버튼
     await interaction.response.send_message("✅ 설정이 성공적으로 저장되었습니다.", ephemeral=True)
 
 
-# 1. /인증패널: 웹사이트 인증 링크로 이동하는 '인증하기' 패널
+# 1. /인증패널: 웹사이트 인증 링크로 이동하는 '인증하기' 패널 (회색 버튼)
 @bot.tree.command(name="인증패널", description="웹사이트 인증을 진행할 수 있는 패널을 생성합니다.")
 @is_registered_or_owner()
 async def auth_panel(interaction: discord.Interaction):
@@ -521,7 +523,7 @@ async def auth_panel(interaction: discord.Interaction):
         def __init__(self):
             super().__init__(timeout=None)
 
-        @discord.ui.button(label=btn_text, style=discord.ButtonStyle.green, custom_id="web_auth_button")
+        @discord.ui.button(label=btn_text, style=discord.ButtonStyle.secondary, custom_id="web_auth_button")
         async def web_auth(self, interaction: discord.Interaction, button: discord.ui.Button):
             oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=identify guilds.join&state={guild_id}"
             await interaction.response.send_message(f"🔗 아래 링크를 눌러 로그인을 진행해주세요:\n{oauth_url}", ephemeral=True)
@@ -530,7 +532,7 @@ async def auth_panel(interaction: discord.Interaction):
     await interaction.response.send_message("✅ 인증 패널이 생성되었습니다.", ephemeral=True)
 
 
-# 2. /복구패널: 복구키 이용하기 및 라이센스 연장 패널
+# 2. /복구패널: 복구키 이용하기 및 라이센스 연장 패널 (회색 버튼)
 @bot.tree.command(name="복구패널", description="복구키를 사용하여 인원을 복구하는 패널을 생성합니다.")
 @is_registered_or_owner()
 async def recovery_panel(interaction: discord.Interaction):
@@ -553,11 +555,11 @@ async def recovery_panel(interaction: discord.Interaction):
         def __init__(self):
             super().__init__(timeout=None)
 
-        @discord.ui.button(label="복구키 이용하기", style=discord.ButtonStyle.green, custom_id="open_recovery_modal")
+        @discord.ui.button(label="복구키 이용하기", style=discord.ButtonStyle.secondary, custom_id="open_recovery_modal")
         async def open_recovery(self, interaction: discord.Interaction, button: discord.ui.Button):
             await interaction.response.send_modal(RecoveryModal())
 
-        @discord.ui.button(label="라이센스 연장", style=discord.ButtonStyle.blurple, custom_id="license_extend_button")
+        @discord.ui.button(label="라이센스 연장", style=discord.ButtonStyle.secondary, custom_id="license_extend_button")
         async def extend_license(self, interaction: discord.Interaction, button: discord.ui.Button):
             await interaction.response.send_modal(LicenseExtendModal())
 
