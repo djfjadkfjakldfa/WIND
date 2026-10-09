@@ -62,6 +62,15 @@ def init_db():
     )
     cursor_bot.execute(
         """
+        CREATE TABLE IF NOT EXISTS license_keys (
+            key_string TEXT PRIMARY KEY,
+            days INTEGER,
+            is_used INTEGER DEFAULT 0
+        )
+    """
+    )
+    cursor_bot.execute(
+        """
         CREATE TABLE IF NOT EXISTS recovery_keys (
             key_string TEXT PRIMARY KEY,
             guild_id TEXT,
@@ -242,9 +251,12 @@ async def check_licenses():
 
     now = datetime.now()
     for guild_id, reg_user_id, expire_str in rows:
-        if not expire_str:
+        if not expire_str or expire_str == "무제한":
             continue
-        expire_date = datetime.strptime(expire_str, "%Y-%m-%d")
+        try:
+            expire_date = datetime.strptime(expire_str, "%Y-%m-%d")
+        except ValueError:
+            continue
         diff = (expire_date - now).days
         if diff == 3:  
             try:
@@ -258,26 +270,44 @@ async def check_licenses():
 
 # ----------------- 슬래시 명령어 -----------------
 
-@bot.tree.command(name="복구봇등록", description="키 또는 기본 방식으로 서버에 복구봇을 등록합니다.")
-@app_commands.describe(키="마스터키 또는 일반 등록키 (선택사항)")
-async def register_bot(interaction: discord.Interaction, 키: str = None):
+@bot.tree.command(name="복구봇등록", description="license_key를 입력하여 서버에 복구봇을 등록합니다.")
+@app_commands.describe(license_key="발급받은 라이센스 키 또는 마스터키 입력")
+async def register_bot(interaction: discord.Interaction, license_key: str):
     guild_id = str(interaction.guild_id)
     user_id = str(interaction.user.id)
 
-    # 마스터키를 입력한 경우 (예: 30일 또는 특별 권한 부여)
-    if 키 == MASTER_KEY:
-        days = 30  # 마스터키 등록 시 기본 부여 기간 (예: 30일)
-        msg_type = "마스터키 인증을 통해"
-    elif 키:
-        # 일반 키나 다른 키를 입력한 경우 (예: 7일)
-        days = 7
-        msg_type = "일반 키를 통해"
-    else:
-        # 키 없이 그냥 등록하는 경우 (예: 3일 기본 체험 또는 기본 등록)
-        days = 3
-        msg_type = "기본 방식으로"
+    expire_date = ""
+    display_period = ""
 
-    expire_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+    # 1. 마스터키인 경우 (무제한)
+    if license_key == MASTER_KEY:
+        expire_date = "무제한"
+        display_period = "무제한 (마스터키)"
+    else:
+        # 2. 일반 라이센스 키인 경우 DB에서 조회
+        conn = sqlite3.connect("bot_system.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT days, is_used FROM license_keys WHERE key_string = ?", (license_key,))
+        row = cursor.fetchone()
+
+        if not row:
+            conn.close()
+            await interaction.response.send_message("❌ 유효하지 않은 라이센스 키입니다.", ephemeral=True)
+            return
+        
+        if row[1] == 1:
+            conn.close()
+            await interaction.response.send_message("❌ 이미 사용된(소모된) 라이센스 키입니다.", ephemeral=True)
+            return
+
+        days = row[0]
+        expire_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+        display_period = f"{days}일"
+
+        # 키 사용 처리 (1회용이므로 사용 완료로 변경)
+        cursor.execute("UPDATE license_keys SET is_used = 1 WHERE key_string = ?", (license_key,))
+        conn.commit()
+        conn.close()
 
     conn = sqlite3.connect("bot_system.db")
     cursor = conn.cursor()
@@ -293,34 +323,31 @@ async def register_bot(interaction: discord.Interaction, 키: str = None):
     conn.close()
 
     await interaction.response.send_message(
-        f"✅ 복구봇이 {msg_type} 성공적으로 등록되었습니다!\n- **등록자:** {interaction.user.mention}\n- **라이센스 만료일:** {expire_date} (총 {days}일)",
+        f"✅ 복구봇이 성공적으로 등록되었습니다!\n- **등록자:** {interaction.user.mention}\n- **부여된 기간:** {display_period}\n- **라이센스 만료일:** {expire_date}",
         ephemeral=True,
     )
 
 
-@bot.tree.command(name="라이센스발급", description="[Owner 전용] 특정 서버의 라이센스 기간을 새로 지정합니다.")
-@app_commands.describe(서버id="대상 디스코드 서버 ID", 일수="부여할 일수")
-async def issue_license(interaction: discord.Interaction, 서버id: str, 일수: int):
+@bot.tree.command(name="라이센스발급", description="[Owner 전용] 지정한 일수만큼 사용할 수 있는 라이센스 키를 발급합니다.")
+@app_commands.describe(일수="해당 키로 등록 시 부여할 일수")
+async def issue_license(interaction: discord.Interaction, 일수: int):
     if interaction.user.id != OWNER_ID:
         await interaction.response.send_message("❌ 봇 소유자(Owner)만 사용할 수 있는 명령어입니다.", ephemeral=True)
         return
 
-    expire_date = (datetime.now() + timedelta(days=일수)).strftime("%Y-%m-%d")
+    import random, string
+    lic_key = ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
+
     conn = sqlite3.connect("bot_system.db")
     cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE guild_settings SET license_expire = ? WHERE guild_id = ?",
-        (expire_date, 서버id),
-    )
-    if cursor.rowcount == 0:
-        cursor.execute(
-            "INSERT INTO guild_settings (guild_id, license_expire) VALUES (?, ?)",
-            (서버id, expire_date),
-        )
+    cursor.execute("INSERT INTO license_keys (key_string, days, is_used) VALUES (?, ?, 0)", (lic_key, 일수))
     conn.commit()
     conn.close()
 
-    await interaction.response.send_message(f"✅ 서버 ID `{서버id}`의 라이센스가 `{expire_date}`까지 설정되었습니다.", ephemeral=True)
+    await interaction.response.send_message(
+        f"✅ 라이센스 키가 발급되었습니다!\n- **키 (`license_key`):** `{lic_key}`\n- **부여 일수:** {일수}일",
+        ephemeral=True,
+    )
 
 
 @bot.tree.command(name="연장키", description="[Owner 전용] 라이센스 연장키를 발급합니다.")
@@ -353,8 +380,12 @@ async def save_server(interaction: discord.Interaction, id: str):
     res = cursor.fetchone()
     conn.close()
 
-    if not res or not res[0] or datetime.strptime(res[0], "%Y-%m-%d") < datetime.now():
-        await interaction.response.send_message("❌ 라이센스가 만료되었거나 등록되지 않았습니다.", ephemeral=True)
+    if not res or not res[0]:
+        await interaction.response.send_message("❌ 라이센스가 등록되지 않았습니다.", ephemeral=True)
+        return
+    
+    if res[0] != "무제한" and datetime.strptime(res[0], "%Y-%m-%d") < datetime.now():
+        await interaction.response.send_message("❌ 라이센스가 만료되었습니다.", ephemeral=True)
         return
 
     import json
@@ -520,12 +551,14 @@ class LicenseExtendModal(discord.ui.Modal, title="라이센스 연장"):
         
         now = datetime.now()
         if g_res and g_res[0]:
-            current_expire = datetime.strptime(g_res[0], "%Y-%m-%d")
-            base_date = current_expire if current_expire > now else now
+            if g_res[0] == "무제한":
+                new_expire = "무제한"
+            else:
+                current_expire = datetime.strptime(g_res[0], "%Y-%m-%d")
+                base_date = current_expire if current_expire > now else now
+                new_expire = (base_date + timedelta(days=add_days)).strftime("%Y-%m-%d")
         else:
-            base_date = now
-
-        new_expire = (base_date + timedelta(days=add_days)).strftime("%Y-%m-%d")
+            new_expire = (now + timedelta(days=add_days)).strftime("%Y-%m-%d")
 
         cursor.execute(
             """
